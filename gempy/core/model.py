@@ -113,15 +113,20 @@ class DataMutation(object):
         if hasattr(self.interpolator.theano_graph.grid_val_T, 'get_value'):
             self.interpolator.theano_graph.grid_val_T.set_value(self.grid.values_r.astype(self.interpolator.dtype))
 
-    def set_active_grid(self, grid_name: Union[str, np.ndarray]):
+    def set_active_grid(self, grid_name: Union[str, np.ndarray], reset=False):
         """
         Set active a given or several grids.
 
         Args:
             grid_name (str, list) {regular, custom, topography, centered}:
+            reset (bool): If true set inactive all grids not in grid_name
+
+        Returns:
+            Grid
 
         """
-        self.grid.deactivate_all_grids()
+        if reset is True:
+            self.grid.deactivate_all_grids()
         self.grid.set_active(grid_name)
         self.update_from_grid()
         print(f'Active grids: {self.grid.grid_types[self.grid.active_grids]}')
@@ -171,27 +176,10 @@ class DataMutation(object):
         return self.grid
 
     @plot_set_topography
+    @setdoc(Grid.set_topography.__doc__)
     def set_topography(self, source='random', **kwargs):
         """
-        Args:
-            source:
-                'gdal':     Load topography from a raster file.
-                'random':   Generate random topography (based on a fractal grid).
-                'saved':    Load topography that was saved with the topography.save() function.
-                            This is useful after loading and saving a heavy raster file with gdal once or after saving a
-                            random topography with the save() function. This .npy file can then be set as topography.
-        Kwargs:
-            if source = 'gdal:
-                filepath:   path to raster file, e.g. '.tif', (for all file formats see https://gdal.org/drivers/raster/index.html)
-            if source = 'random':
-                fd:         fractal dimension, defaults to 2.0
-                d_z:        maximum height difference. If none, last 20% of the model in z direction
-                extent:     extent in xy direction. If none, geo_model.grid.extent
-                resolution: desired resolution of the topography array. If none, geo_model.grid.resoution
-            if source = 'saved':
-                filepath:   path to the .npy file that was created using the topography.save() function
-
-        Returns: :class:gempy.core.data.Topography
+        Create a topography grid and activate it.
         """
 
         self.grid.set_topography(source, **kwargs)
@@ -199,13 +187,14 @@ class DataMutation(object):
         print(f'Active grids: {self.grid.grid_types[self.grid.active_grids]}')
         return self.grid
 
-    @setdoc(Grid.set_centered_grid.__doc__, )
+    @setdoc(Grid.set_centered_grid.__doc__)
     def set_centered_grid(self, centers, radio, resolution=None):
         self.grid.set_centered_grid(centers, radio, resolution=resolution)
         self.update_from_grid()
         print(f'Active grids: {self.grid.grid_types[self.grid.active_grids]}')
         return self.grid
 
+    @setdoc(Grid.set_section_grid.__doc__)
     def set_section_grid(self, section_dict):
         self.grid.set_section_grid(section_dict)
         self.update_from_grid()
@@ -1009,7 +998,10 @@ class DataMutation(object):
         self.surfaces.set_basement()
         self.surface_points.df['id'] = self.surface_points.df['surface'].map(
             self.surfaces.df.set_index('surface')['id']).astype(int)
+        self.orientations.df['id'] = self.orientations.df['surface'].map(
+            self.surfaces.df.set_index('surface')['id']).astype(int)
         self.surface_points.sort_table()
+        self.orientations.sort_table()
         self.update_structure()
         return self.surfaces
 
@@ -1246,6 +1238,9 @@ class Model(DataMutation):
             :class:`Options`
         """
 
+        warnings.warn('set_gravity_interpolator will be deprecated in GemPy 2.2.'
+                      ' Use gempy.set_interpolator(geo_model, type=\'grav\') instead')
+
         assert self.grid.centered_grid is not None, 'First you need to set up a gravity grid to compile the graph'
         assert density_block is not None or pos_density is not None, 'If you do not pass the density block you need to'\
                                                                      ' pass the position of surface values where' \
@@ -1268,6 +1263,6 @@ class Model(DataMutation):
         self.interpolator_gravity.set_all_shared_parameters(reset_ctrl=True)
 
         if compile_theano is True:
-            self.interpolator_gravity.compile_th_fn(density_block, pos_density, inplace=True)
+            self.interpolator_gravity.compile_th_fn_grav(density_block, pos_density, inplace=True)
 
         return self.additional_data.options
