@@ -18,13 +18,17 @@ from gempy.plot import visualization_2d, plot, helpers
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from copy import deepcopy
+from skimage import measure
+from gempy.core.gempy_api import compute_model
 
 class domain(object):
 
     def __init__(self, model, domain=None, data=None, set_mean=None):
 
+        #self.model = model
         # set model from a gempy solution
         # TODO: Check if I actually need all this or if its easier to just get grid and lith of the solution
+        #self.sol = model.solutions
         self.sol = model
 
         # set kriging surfaces, basically in which lithologies to do all this, default is everything
@@ -65,8 +69,14 @@ class domain(object):
         self.mask = np.isin(self.sol.lith_block, self.domain)
 
         # Apply mask to lith_block and grid
+        #self.model.set_active_grid('regular_grid')
+        #self.model.grid.set_inactive('custom')
+
         self.krig_lith = self.sol.lith_block[self.mask]
         self.krig_grid = self.sol.grid.values[self.mask]
+        self.krig_scal = self.sol.scalar_field_matrix[0][self.mask] # does not work, why is that different
+        self.krig_scalmax = self.krig_scal.max()
+        self.krig_scalmin = self.krig_scal.min()
 
     def set_data(self, data):
         """
@@ -215,12 +225,13 @@ class variogram_model(object):
 
 class field_solution(object):
 
-    def __init__(self, domain, variogram_model, results, field_type):
+    def __init__(self, domain, variogram_model, results, field_type, grid_distances):
 
         self.results_df = results
         self.variogram_model = deepcopy(variogram_model)
         self.domain = deepcopy(domain)
         self.field_type = field_type
+        self.grid_distances = grid_distances
 
     def plot_results(self, geo_data, prop='val', direction='y', result='interpolation', cell_number=0, contour=False,
                      cmap='viridis', alpha=0, legend=False, interpolation='nearest', show_data=True):
@@ -380,6 +391,99 @@ def ordinary_kriging(a, b, prop, var_mod):
 
     return result, pred_var
 
+def def_dist(domain, coords):
+
+    # 1: Calculate reference plane within domain between top and bottom border (based on scalar field value)
+    med_ver, med_sim, grad_plane, aux_vert1, aux_vert2 = create_central_plane(domain)
+
+    # 2: Projection of each point in domain on reference plane (by closest point) and save reference point
+    #    Definition of perpendicular distance portion either by method A or method B
+    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, aux_vert1, aux_vert2)
+
+    # 3: Calculate all distances between vertices on reference plane by heat method
+    dist_clean = self.proj_surface_dist_each_to_each(med_ver, med_sim)
+
+    # 4: Combine results to final distance matrix, applying anisotropy factor if desired
+    dist_matrix = self.distances_grid(ref, perp, dist_clean, grid_reordered)
+
+    return dist_matrix
+
+def create_central_plane(domain):
+
+    print(domain)
+    # do precalculations, mesh through basic point (only once)
+    # a = self.geomodel[1].reshape(self.resolution)
+    a = domain.sol.scalar_field_matrix #.reshape(domain.sol.grid.regular_grid.resolution)
+
+    grad = (domain.krig_scalmax + domain.krig_scalmin) / 2
+
+    vertices, simplices, normals, values = measure.marching_cubes_lewiner(
+        a,
+        grad,
+        step_size=1,
+        spacing=((domain.sol.grid.regular_grid.extent[1] / domain.sol.grid.regular_grid.resolution[0]),
+                 (domain.sol.grid.regular_grid.extent[3] / domain.sol.grid.regular_grid.resolution[1]),
+                 (domain.sol.grid.regular_grid.extent[5] / domain.sol.grid.regular_grid.resolution[2])))
+
+    # Missing stuff for fault
+    aux_vert1 = 0
+    aux_vert2 = 0
+
+    return vertices, simplices, grad, aux_vert1, aux_vert2
+
+def proj_surface_dist_each_to_each(med_ver, med_sim):
+    # precomputing
+    compute_distance = GeodesicDistanceComputation(med_ver, med_sim)
+
+    # create empty matrix
+    dist = np.zeros([len(med_ver), len(med_ver)])
+
+    for i in range(len(med_ver)):
+        # distance calculation
+        dist[i] = compute_distance(i)
+
+    # operation to take average of dist, as heat method is not exact
+    dist_clean = (dist + dist.T) / 2
+
+    return dist_clean
+
+def projection_of_each_point(ver, plane_grad, coords, aux_vert1, aux_vert2):
+
+    # only if check fault for projection, try only for B here
+    #self.fault_check = grid_reordered[:, 5]
+    #self.fault_check = np.round(self.fault_check)
+
+    # create matrix from grid data, as well as empty array for results
+    # grad_check = self.grid_dataframe.as_matrix(('scalar',))[:,0] # old version
+
+    # TODO. This is a problem
+    grad_check = grid_reordered[:, 4]  # new version, seems to be equivalent
+
+    # grad_check = grad_check > plane_grad
+    ref = np.zeros(len(coords))
+    perp = np.zeros(len(coords))
+
+    # factor calculation for gradient distance to distance with average thickness
+    ave_thick = 200 # TODO: This sucks - need a better solution
+    grad_dist = domain.krig_scalmax + domain.krig_scalmin
+    fact = ave_thick / grad_dist
+
+    # loop through grid to refernce each point to closest point on reference plane by index
+    # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
+    for i in range(len(coords)):
+        ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
+        # get normed distance from gradient distance
+        perp[i] = (grad_check[i] - plane_grad) * fact
+
+    # reshape perp to make values either negative or positive (depending on scalar field value)
+    # there has to be an easier way to do it with the a mask
+    for i in range(len(perp)):
+        if grad_check[i] == True:
+            perp[i] = perp[i] * (-1)
+
+    return ref, perp
+
+
 def create_kriged_field(domain, variogram_model, distance_type='euclidian',
                         moving_neighbourhood='all', kriging_type='OK', n_closest_points=20):
     '''
@@ -401,6 +505,13 @@ def create_kriged_field(domain, variogram_model, distance_type='euclidian',
         dist_all_to_all = cdist(domain.data[:, :3], domain.data[:, :3])
         # calculate distances between all grid points and all input data points
         dist_grid_to_all = cdist(domain.krig_grid, domain.data[:, :3])
+    elif distance_type == 'deformed':
+        print('not yet implemented')
+        #TODO: I think this is a little more tricky, does not work as for SGS
+        # calculate distances between all input data points
+        #dist_all_to_all = def_dist(domain.data[:, :3], domain.data[:, :3])
+        # calculate distances between all grid points and all input data points
+        #dist_grid_to_all = def_dist(domain.krig_grid, domain.data[:, :3])
 
     # Main loop that goes through whole domain (grid)
     for i in range(len(domain.krig_grid)):
@@ -452,10 +563,12 @@ def create_kriged_field(domain, variogram_model, distance_type='euclidian',
 
     results_df = pd.DataFrame(data=d)
 
-    return field_solution(domain, variogram_model, results_df, field_type='interpolation')
+    #TODO dist_grid_to_all is not really what I want here
+    return field_solution(domain, variogram_model, results_df, field_type='interpolation', grid_distances=dist_grid_to_all)
 
 def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
-                        moving_neighbourhood='all', kriging_type='OK', n_closest_points=20):
+                        moving_neighbourhood='all', kriging_type='OK', n_closest_points=20,
+                        sgs_grid=None, shuffled_grid=None):
     '''
     Method to create a kriged field over the defined grid of the gempy solution depending on the defined
     input data (conditioning).
@@ -466,12 +579,19 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     # perform SGS with same options as kriging
     # TODO: set options for no starting points (Gaussian field) - mean and variance
 
-    # set random path through all unknown locations
-    shuffled_grid = domain.krig_grid
-    np.random.shuffle(shuffled_grid)
+    print(domain)
 
+    # TODO: This was the right way to do it
+    # set random path through all unknown locations
+    #shuffled_grid = domain.krig_grid
+    #np.random.shuffle(shuffled_grid)
     # append shuffled grid to input locations
-    sgs_locations = np.vstack((domain.data[:,:3],shuffled_grid))
+    #sgs_locations = np.vstack((domain.data[:,:3],shuffled_grid))
+
+    # TODO: This is a dirty fix
+    sgs_locations = sgs_grid[:,:3]
+    sgs_gradients = sgs_grid[:,3]
+
     # create array for input properties
     sgs_prop_updating = domain.data[:,3] # use this and then always stack new ant end
 
@@ -482,8 +602,11 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     # 1) all points to all points in order of path
     # 2) known locations at beginning?
     if distance_type == 'euclidian':
-        # calculate distances between all input data points
+        # calculate distances between all input data points and grid points
         dist_all_to_all = cdist(sgs_locations, sgs_locations)
+    elif distance_type == 'deformed':
+        # calculate distances between all input data points anf grid points
+        dist_all_to_all = def_dist(domain, sgs_locations)
 
     # set counter og active data (start=input data, grwoing by 1 newly calcualted point each run)
     active_data = len(sgs_prop_updating)
@@ -566,7 +689,7 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     results_df = pd.DataFrame(data=d)
     results_df = results_df.sort_values(['X','Y','Z'])
 
-    return field_solution(domain, variogram_model, results_df, field_type='simulation')
+    return field_solution(domain, variogram_model, results_df, field_type='simulation', grid_distances=dist_all_to_all)
 
 
 

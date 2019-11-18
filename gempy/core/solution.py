@@ -80,6 +80,10 @@ class Solution(object):
 
         self.custom = None
 
+    def set_solution_to_custom(self, values: Union[list, np.ndarray]):
+        l0, l1 = self.grid.get_grid_args('custom')
+        self.custom = np.array([values[0][:, l0: l1], values[3][:, l0: l1].astype(float)])
+
     def __repr__(self):
         return '\nLithology ids \n  %s \n' \
                % (np.array2string(self.lith_block))
