@@ -19,6 +19,9 @@ import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 from copy import deepcopy
 from skimage import measure
+from scipy import sparse
+from scipy.sparse.linalg import splu
+from mpl_toolkits.mplot3d import Axes3D
 from gempy.core.gempy_api import compute_model
 
 class domain(object):
@@ -391,29 +394,33 @@ def ordinary_kriging(a, b, prop, var_mod):
 
     return result, pred_var
 
-def def_dist(domain, coords):
+def def_dist(domain, coords, gradients):
 
     # 1: Calculate reference plane within domain between top and bottom border (based on scalar field value)
-    med_ver, med_sim, grad_plane, aux_vert1, aux_vert2 = create_central_plane(domain)
+    med_ver, med_sim, grad_plane = create_central_plane(domain)
+
+    # plot plane
+    #fig = plt.figure(figsize=(16,10))
+    #ax = fig.add_subplot(1, 1, 1, projection='3d')
+    #a = ax.plot_trisurf(med_ver[:,0], med_ver[:,1], med_ver[:,2], triangles=med_sim)
 
     # 2: Projection of each point in domain on reference plane (by closest point) and save reference point
     #    Definition of perpendicular distance portion either by method A or method B
-    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, aux_vert1, aux_vert2)
+    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, gradients, domain)
 
     # 3: Calculate all distances between vertices on reference plane by heat method
-    dist_clean = self.proj_surface_dist_each_to_each(med_ver, med_sim)
+    dist_clean = proj_surface_dist_each_to_each(med_ver, med_sim)
 
     # 4: Combine results to final distance matrix, applying anisotropy factor if desired
-    dist_matrix = self.distances_grid(ref, perp, dist_clean, grid_reordered)
+    dist_matrix = distances_grid(ref, perp, dist_clean)
 
     return dist_matrix
 
 def create_central_plane(domain):
 
-    print(domain)
     # do precalculations, mesh through basic point (only once)
     # a = self.geomodel[1].reshape(self.resolution)
-    a = domain.sol.scalar_field_matrix #.reshape(domain.sol.grid.regular_grid.resolution)
+    a = domain.sol.scalar_field_matrix.reshape(domain.sol.grid.regular_grid.resolution)
 
     grad = (domain.krig_scalmax + domain.krig_scalmin) / 2
 
@@ -429,7 +436,7 @@ def create_central_plane(domain):
     aux_vert1 = 0
     aux_vert2 = 0
 
-    return vertices, simplices, grad, aux_vert1, aux_vert2
+    return vertices, simplices, grad
 
 def proj_surface_dist_each_to_each(med_ver, med_sim):
     # precomputing
@@ -447,18 +454,35 @@ def proj_surface_dist_each_to_each(med_ver, med_sim):
 
     return dist_clean
 
-def projection_of_each_point(ver, plane_grad, coords, aux_vert1, aux_vert2):
+def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
+
+    # TODO: Only works properly with absolute distance, does not work via gradient
+    ref = np.zeros(len(coords))
+    perp = np.zeros(len(coords))
 
     # only if check fault for projection, try only for B here
-    #self.fault_check = grid_reordered[:, 5]
-    #self.fault_check = np.round(self.fault_check)
-
     # create matrix from grid data, as well as empty array for results
     # grad_check = self.grid_dataframe.as_matrix(('scalar',))[:,0] # old version
+    # new version, seems to be equivalent
+    gradients = gradients > plane_grad
+    ref = np.zeros(len(coords))
+    perp = np.zeros(len(coords))
+
+    # loop through grid to refernce each point to closest point on reference plane by index
+    # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
+    for i in range(len(coords)):
+        ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
+        # get the cdistance to closest point and save it
+        perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+
+    # reshape perp to make values either negative or positive (depending on scalar field value)
+    # there has to be an easier way to do it with the a mask
+    for i in range(len(perp)):
+        if gradients[i] == True:
+            perp[i] = perp[i] * (-1)
 
     # TODO. This is a problem
-    grad_check = grid_reordered[:, 4]  # new version, seems to be equivalent
-
+    '''
     # grad_check = grad_check > plane_grad
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
@@ -473,15 +497,35 @@ def projection_of_each_point(ver, plane_grad, coords, aux_vert1, aux_vert2):
     for i in range(len(coords)):
         ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
         # get normed distance from gradient distance
-        perp[i] = (grad_check[i] - plane_grad) * fact
+        perp[i] = (gradients[i] - plane_grad) * fact
 
     # reshape perp to make values either negative or positive (depending on scalar field value)
     # there has to be an easier way to do it with the a mask
     for i in range(len(perp)):
-        if grad_check[i] == True:
+        if gradients[i] == True:
             perp[i] = perp[i] * (-1)
+    '''
 
     return ref, perp
+
+def distances_grid(ref, perp, dist_clean):
+
+    # manual
+    an_factor = 5
+
+    dist_matrix = np.zeros([len(ref), len(ref)])
+    ref = ref.astype(int)
+
+    for i in range(len(ref)):
+        dist_matrix[i][:] = np.sqrt(
+            ((dist_clean[ref[i]][ref[:]] / an_factor)) ** 2 + (abs(perp[i] - perp[:]) ** 2))
+
+    # algorithm is not optimal for short distances, thus putting them to minium possible cdist value for resolution
+    # seems very reasonable, here that is 25
+    # dist_matrix[dist_matrix < 25] = 25
+    np.fill_diagonal(dist_matrix, 0)
+
+    return dist_matrix
 
 
 def create_kriged_field(domain, variogram_model, distance_type='euclidian',
@@ -579,8 +623,6 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     # perform SGS with same options as kriging
     # TODO: set options for no starting points (Gaussian field) - mean and variance
 
-    print(domain)
-
     # TODO: This was the right way to do it
     # set random path through all unknown locations
     #shuffled_grid = domain.krig_grid
@@ -594,6 +636,7 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
 
     # create array for input properties
     sgs_prop_updating = domain.data[:,3] # use this and then always stack new ant end
+    print(sgs_prop_updating)
 
     # container for estimation variances
     estimation_var = np.zeros(len(shuffled_grid))
@@ -606,7 +649,7 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
         dist_all_to_all = cdist(sgs_locations, sgs_locations)
     elif distance_type == 'deformed':
         # calculate distances between all input data points anf grid points
-        dist_all_to_all = def_dist(domain, sgs_locations)
+        dist_all_to_all = def_dist(domain, sgs_locations, sgs_gradients)
 
     # set counter og active data (start=input data, grwoing by 1 newly calcualted point each run)
     active_data = len(sgs_prop_updating)
@@ -692,4 +735,141 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     return field_solution(domain, variogram_model, results_df, field_type='simulation', grid_distances=dist_all_to_all)
 
 
+def veclen(vectors):
+    """ return L2 norm (vector length) along the last axis, for example to compute the length of an array of vectors """
+    return np.sqrt(np.sum(vectors ** 2, axis=-1))
+
+
+def normalized(vectors):
+    """ normalize array of vectors along the last axis """
+    return vectors / veclen(vectors)[..., np.newaxis]
+
+
+def compute_mesh_laplacian(verts, tris):
+    """
+    computes a sparse matrix representing the discretized laplace-beltrami operator of the mesh
+    given by n vertex positions ("verts") and a m triangles ("tris")
+
+    verts: (n, 3) array (float)
+    tris: (m, 3) array (int) - indices into the verts array
+    computes the conformal weights ("cotangent weights") for the mesh, ie:
+    w_ij = - .5 * (cot \alpha + cot \beta)
+    See:
+        Olga Sorkine, "Laplacian Mesh Processing"
+        and for theoretical comparison of different discretizations, see
+        Max Wardetzky et al., "Discrete Laplace operators: No free lunch"
+    returns matrix L that computes the laplacian coordinates, e.g. L * x = delta
+    """
+    n = len(verts)
+    W_ij = np.empty(0)
+    I = np.empty(0, np.int32)
+    J = np.empty(0, np.int32)
+    for i1, i2, i3 in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]:  # for edge i2 --> i3 facing vertex i1
+        vi1 = tris[:, i1]  # vertex index of i1
+        vi2 = tris[:, i2]
+        vi3 = tris[:, i3]
+        # vertex vi1 faces the edge between vi2--vi3
+        # compute the angle at v1
+        # add cotangent angle at v1 to opposite edge v2--v3
+        # the cotangent weights are symmetric
+        u = verts[vi2] - verts[vi1]
+        v = verts[vi3] - verts[vi1]
+        cotan = (u * v).sum(axis=1) / veclen(np.cross(u, v))
+        W_ij = np.append(W_ij, 0.5 * cotan)
+        I = np.append(I, vi2)
+        J = np.append(J, vi3)
+        W_ij = np.append(W_ij, 0.5 * cotan)
+        I = np.append(I, vi3)
+        J = np.append(J, vi2)
+    L = sparse.csr_matrix((W_ij, (I, J)), shape=(n, n))
+
+    # compute diagonal entries
+    L = L - sparse.spdiags(L * np.ones(n), 0, n, n)
+    L = L.tocsr()
+    # area matrix
+    e1 = verts[tris[:, 1]] - verts[tris[:, 0]]
+    e2 = verts[tris[:, 2]] - verts[tris[:, 0]]
+    n = np.cross(e1, e2)
+    triangle_area = .5 * veclen(n)
+    # compute per-vertex area
+    vertex_area = np.zeros(len(verts))
+    ta3 = triangle_area / 3
+    for i in range(tris.shape[1]):  # Jan: changed xrange to range
+        bc = np.bincount(tris[:, i].astype(int), ta3)
+        vertex_area[:len(bc)] += bc
+    VA = sparse.spdiags(vertex_area, 0, len(verts), len(verts))
+
+    return L, VA
+
+
+class GeodesicDistanceComputation(object):
+    """
+    Computation of geodesic distances on triangle meshes using the heat method from the impressive paper
+        Geodesics in Heat: A New Approach to Computing Distance Based on Heat Flow
+        Keenan Crane, Clarisse Weischedel, Max Wardetzky
+        ACM Transactions on Graphics (SIGGRAPH 2013)
+    Example usage:
+        >>> compute_distance = GeodesicDistanceComputation(vertices, triangles)
+        >>> distance_of_each_vertex_to_vertex_0 = compute_distance(0)
+    """
+
+    def __init__(self, verts, tris, m=10.0):
+        self._verts = verts
+        self._tris = tris
+        # precompute some stuff needed later on
+        e01 = verts[tris[:, 1]] - verts[tris[:, 0]]
+        e12 = verts[tris[:, 2]] - verts[tris[:, 1]]
+        e20 = verts[tris[:, 0]] - verts[tris[:, 2]]
+        self._triangle_area = .5 * veclen(np.cross(e01, e12))
+        unit_normal = normalized(np.cross(normalized(e01), normalized(e12)))
+        self._unit_normal_cross_e01 = np.cross(unit_normal, e01)
+        self._unit_normal_cross_e12 = np.cross(unit_normal, e12)
+        self._unit_normal_cross_e20 = np.cross(unit_normal, e20)
+        # parameters for heat method
+        h = np.mean(list(map(veclen, [e01, e12, e20])))  # Jan: converted to list
+
+        # Jan: m is constant optimized at 1, here 10 is used
+        # Jan: h is mean distance between nodes/length of edges
+        t = m * h ** 2
+
+        # pre-factorize poisson systems
+        Lc, A = compute_mesh_laplacian(verts, tris)
+        self._factored_AtLc = splu((A - t * Lc).tocsc()).solve
+        self._factored_L = splu(Lc.tocsc()).solve
+
+    def __call__(self, idx):
+        """
+        computes geodesic distances to all vertices in the mesh
+        idx can be either an integer (single vertex index) or a list of vertex indices
+        or an array of bools of length n (with n the number of vertices in the mesh)
+        """
+        u0 = np.zeros(len(self._verts))
+        u0[idx] = 1.0
+        # heat method, step 1
+        u = self._factored_AtLc(u0).ravel()
+        # heat method step 2
+        grad_u = 1 / (2 * self._triangle_area)[:, np.newaxis] * (
+                self._unit_normal_cross_e01 * u[self._tris[:, 2]][:, np.newaxis]
+                + self._unit_normal_cross_e12 * u[self._tris[:, 0]][:, np.newaxis]
+                + self._unit_normal_cross_e20 * u[self._tris[:, 1]][:, np.newaxis]
+        )
+        X = - grad_u / veclen(grad_u)[:, np.newaxis]
+        # heat method step 3
+        div_Xs = np.zeros(len(self._verts))
+        for i1, i2, i3 in [(0, 1, 2), (1, 2, 0), (2, 0, 1)]:  # for edge i2 --> i3 facing vertex i1
+            vi1, vi2, vi3 = self._tris[:, i1], self._tris[:, i2], self._tris[:, i3]
+            e1 = self._verts[vi2] - self._verts[vi1]
+            e2 = self._verts[vi3] - self._verts[vi1]
+            e_opp = self._verts[vi3] - self._verts[vi2]
+            cot1 = 1 / np.tan(np.arccos(
+                (normalized(-e2) * normalized(-e_opp)).sum(axis=1)))
+            cot2 = 1 / np.tan(np.arccos(
+                (normalized(-e1) * normalized(e_opp)).sum(axis=1)))
+            div_Xs += np.bincount(
+                vi1.astype(int),
+                0.5 * (cot1 * (e1 * X).sum(axis=1) + cot2 * (e2 * X).sum(axis=1)),
+                minlength=len(self._verts))
+        phi = self._factored_L(div_Xs).ravel()
+        phi -= phi.min()
+        return phi
 
