@@ -236,6 +236,40 @@ class field_solution(object):
         self.field_type = field_type
         self.grid_distances = grid_distances
 
+    def plot_distances(self, geo_data, direction='y', cell_number=0, contour=False, cmap='hot',
+                       alpha=0, legend=False, interpolation='nearest'):
+
+        #fig = plt.figure(figsize=(16,10))
+        #ax = fig.add_subplot(1, 1, 1, projection='3d')
+        #a = ax.scatter(self.results_df['X'], self.results_df['Y'], self.results_df['Z'], c=self.grid_distances[:,100], cmap='Reds')
+
+        a = np.full_like(self.domain.mask, np.nan, dtype=np.double)
+        a[np.where(self.domain.mask == True)] = self.grid_distances[:,100]
+
+        # create plot object
+        p = visualization_2d.PlotSolution(geo_data)
+        _a, _b, _c, extent_val, x, y = p._slice(direction, cell_number)[:-2]
+
+        # colors
+        cmap = cm.get_cmap(cmap)
+        cmap.set_bad(color='w', alpha=alpha)
+
+        plot.plot_section(geo_data, direction=direction, cell_number=cell_number)
+        if contour == True:
+            im = plt.contourf(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
+                              origin='lower', levels=25,
+                              extent=extent_val, interpolation=interpolation)
+            if legend:
+                ax = plt.gca()
+                helpers.add_colorbar(axes=ax, label='prop', cs=im)
+        else:
+            im = plt.imshow(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
+                            origin='lower',
+                            extent=extent_val, interpolation=interpolation)
+            if legend:
+                helpers.add_colorbar(im, label='property value', location='right')
+
+
     def plot_results(self, geo_data, prop='val', direction='y', result='interpolation', cell_number=0, contour=False,
                      cmap='viridis', alpha=0, legend=False, interpolation='nearest', show_data=True):
         """
@@ -511,7 +545,7 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
 def distances_grid(ref, perp, dist_clean):
 
     # manual
-    an_factor = 5
+    an_factor = 1
 
     dist_matrix = np.zeros([len(ref), len(ref)])
     ref = ref.astype(int)
@@ -636,7 +670,6 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
 
     # create array for input properties
     sgs_prop_updating = domain.data[:,3] # use this and then always stack new ant end
-    print(sgs_prop_updating)
 
     # container for estimation variances
     estimation_var = np.zeros(len(shuffled_grid))
@@ -732,7 +765,17 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     results_df = pd.DataFrame(data=d)
     results_df = results_df.sort_values(['X','Y','Z'])
 
-    return field_solution(domain, variogram_model, results_df, field_type='simulation', grid_distances=dist_all_to_all)
+    aux_sort = np.hstack((shuffled_grid[:, :3], dist_all_to_all[4:,4:]))
+    #print(aux_sort[:,0])
+
+    sorted_grid_distances = aux_sort[np.lexsort((aux_sort[:,2], aux_sort[:,1],aux_sort[:,0]))]
+    sorted_grid_distances = sorted_grid_distances[:,3:]
+
+    # Dont know why this does not work
+    #idx = results_df.index.values
+    #sorted_grid_distances = dist_all_to_all[4:,4:][idx]
+
+    return field_solution(domain, variogram_model, results_df, field_type='simulation', grid_distances=sorted_grid_distances)
 
 
 def veclen(vectors):
