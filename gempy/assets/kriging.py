@@ -77,7 +77,7 @@ class domain(object):
 
         self.krig_lith = self.sol.lith_block[self.mask]
         self.krig_grid = self.sol.grid.values[self.mask]
-        self.krig_scal = self.sol.scalar_field_matrix[0][self.mask] # does not work, why is that different
+        self.krig_scal = self.sol.scalar_field_matrix[1][self.mask] # does not work, why is that different
         self.krig_scalmax = self.krig_scal.max()
         self.krig_scalmin = self.krig_scal.min()
 
@@ -434,9 +434,9 @@ def def_dist(domain, coords, gradients):
     med_ver, med_sim, grad_plane = create_central_plane(domain)
 
     # plot plane
-    #fig = plt.figure(figsize=(16,10))
-    #ax = fig.add_subplot(1, 1, 1, projection='3d')
-    #a = ax.plot_trisurf(med_ver[:,0], med_ver[:,1], med_ver[:,2], triangles=med_sim)
+    fig = plt.figure(figsize=(16,10))
+    ax = fig.add_subplot(1, 1, 1, projection='3d')
+    a = ax.plot_trisurf(med_ver[:,0], med_ver[:,1], med_ver[:,2], triangles=med_sim)
 
     # 2: Projection of each point in domain on reference plane (by closest point) and save reference point
     #    Definition of perpendicular distance portion either by method A or method B
@@ -454,7 +454,8 @@ def create_central_plane(domain):
 
     # do precalculations, mesh through basic point (only once)
     # a = self.geomodel[1].reshape(self.resolution)
-    a = domain.sol.scalar_field_matrix.reshape(domain.sol.grid.regular_grid.resolution)
+    #a = domain.sol.scalar_field_matrix.reshape(domain.sol.grid.regular_grid.resolution)
+    a = domain.sol.scalar_field_matrix[1].reshape(domain.sol.grid.regular_grid.resolution)
 
     grad = (domain.krig_scalmax + domain.krig_scalmin) / 2
 
@@ -498,7 +499,7 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
     # create matrix from grid data, as well as empty array for results
     # grad_check = self.grid_dataframe.as_matrix(('scalar',))[:,0] # old version
     # new version, seems to be equivalent
-    gradients = gradients > plane_grad
+    gradients = gradients >= plane_grad
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
 
@@ -545,7 +546,7 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
 def distances_grid(ref, perp, dist_clean):
 
     # manual
-    an_factor = 1
+    an_factor = 5
 
     dist_matrix = np.zeros([len(ref), len(ref)])
     ref = ref.astype(int)
@@ -768,12 +769,12 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
     aux_sort = np.hstack((shuffled_grid[:, :3], dist_all_to_all[4:,4:]))
     #print(aux_sort[:,0])
 
-    sorted_grid_distances = aux_sort[np.lexsort((aux_sort[:,2], aux_sort[:,1],aux_sort[:,0]))]
-    sorted_grid_distances = sorted_grid_distances[:,3:]
+    #
+    #sorted_grid_distances = aux_sort[np.lexsort((aux_sort[:,2], aux_sort[:,1],aux_sort[:,0]))]
+    #sorted_grid_distances = sorted_grid_distances[:,3:]
 
-    # Dont know why this does not work
-    #idx = results_df.index.values
-    #sorted_grid_distances = dist_all_to_all[4:,4:][idx]
+    # more elegant to sort distances
+    sorted_grid_distances = dist_all_to_all[4:,4:][results_df.index.values]
 
     return field_solution(domain, variogram_model, results_df, field_type='simulation', grid_distances=sorted_grid_distances)
 
