@@ -26,13 +26,14 @@ from gempy.core.gempy_api import compute_model
 
 class domain(object):
 
-    def __init__(self, model, domain=None, data=None, set_mean=None):
+    def __init__(self, model, domain=None, data=None, set_mean=None, fault=False):
 
         #self.model = model
         # set model from a gempy solution
         # TODO: Check if I actually need all this or if its easier to just get grid and lith of the solution
         #self.sol = model.solutions
         self.sol = model
+        self.fault = fault
 
         # set kriging surfaces, basically in which lithologies to do all this, default is everything
         # TODO: Maybe also allow to pass a gempy regular grid object
@@ -54,6 +55,11 @@ class domain(object):
 
         self.inp_var = np.var(data[:, 3])
         self.inp_std = np.sqrt(self.inp_var)
+
+        if self.fault == True:
+            #self.faultmodel = faultmodel
+            self.offset = 20
+            self.fz_ext = [1950, 2050]
 
     def set_domain(self, domain):
         """
@@ -77,9 +83,13 @@ class domain(object):
 
         self.krig_lith = self.sol.lith_block[self.mask]
         self.krig_grid = self.sol.grid.values[self.mask]
-        self.krig_scal = self.sol.scalar_field_matrix[1][self.mask] # does not work, why is that different
+        self.krig_scal = self.sol.scalar_field_matrix[2][self.mask] # does not work, why is that different
         self.krig_scalmax = self.krig_scal.max()
         self.krig_scalmin = self.krig_scal.min()
+
+        if self.fault == True:
+            self.fault_model = np.round(self.sol.scalar_field_matrix[0][self.mask])
+
 
     def set_data(self, data):
         """
@@ -257,7 +267,7 @@ class field_solution(object):
         plot.plot_section(geo_data, direction=direction, cell_number=cell_number)
         if contour == True:
             im = plt.contourf(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
-                              origin='lower', levels=25,
+                              origin='lower', levels=45,
                               extent=extent_val, interpolation=interpolation)
             if legend:
                 ax = plt.gca()
@@ -428,10 +438,10 @@ def ordinary_kriging(a, b, prop, var_mod):
 
     return result, pred_var
 
-def def_dist(domain, coords, gradients):
+def def_dist(domain, coords, gradients, fault_block):
 
     # 1: Calculate reference plane within domain between top and bottom border (based on scalar field value)
-    med_ver, med_sim, grad_plane = create_central_plane(domain)
+    med_ver, med_sim, grad_plane, aux_vert1, aux_vert2 = create_central_plane(domain)
 
     # plot plane
     fig = plt.figure(figsize=(16,10))
@@ -440,7 +450,7 @@ def def_dist(domain, coords, gradients):
 
     # 2: Projection of each point in domain on reference plane (by closest point) and save reference point
     #    Definition of perpendicular distance portion either by method A or method B
-    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, gradients, domain)
+    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, gradients, domain, aux_vert1, aux_vert2, fault_block)
 
     # 3: Calculate all distances between vertices on reference plane by heat method
     dist_clean = proj_surface_dist_each_to_each(med_ver, med_sim)
@@ -455,7 +465,7 @@ def create_central_plane(domain):
     # do precalculations, mesh through basic point (only once)
     # a = self.geomodel[1].reshape(self.resolution)
     #a = domain.sol.scalar_field_matrix.reshape(domain.sol.grid.regular_grid.resolution)
-    a = domain.sol.scalar_field_matrix[1].reshape(domain.sol.grid.regular_grid.resolution)
+    a = domain.sol.scalar_field_matrix[2].reshape(domain.sol.grid.regular_grid.resolution)
 
     grad = (domain.krig_scalmax + domain.krig_scalmin) / 2
 
@@ -467,11 +477,20 @@ def create_central_plane(domain):
                  (domain.sol.grid.regular_grid.extent[3] / domain.sol.grid.regular_grid.resolution[1]),
                  (domain.sol.grid.regular_grid.extent[5] / domain.sol.grid.regular_grid.resolution[2])))
 
-    # Missing stuff for fault
-    aux_vert1 = 0
-    aux_vert2 = 0
+    if domain.fault == True:
+        # for checking fault block when projecting
+        test2 = np.where((domain.fz_ext[1] < vertices[:, 0]), vertices[:, 0], 1000000)
+        test1 = np.where((vertices[:, 0] < domain.fz_ext[0]), vertices[:, 0], 1000000)
+        test2 = test2.reshape(vertices[:, 1:].shape[0], 1)
+        test1 = test1.reshape(vertices[:, 1:].shape[0], 1)
+        aux_vert2 = np.hstack((test2, vertices[:, 1:]))
+        aux_vert1 = np.hstack((test1, vertices[:, 1:]))
+    else:
+        aux_vert1 = 0
+        aux_vert2 = 0
 
-    return vertices, simplices, grad
+
+    return vertices, simplices, grad, aux_vert1, aux_vert2
 
 def proj_surface_dist_each_to_each(med_ver, med_sim):
     # precomputing
@@ -489,11 +508,13 @@ def proj_surface_dist_each_to_each(med_ver, med_sim):
 
     return dist_clean
 
-def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
+def projection_of_each_point(ver, plane_grad, coords, gradients, domain, aux_vert1, aux_vert2, fault_check):
 
     # TODO: Only works properly with absolute distance, does not work via gradient
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
+
+    # only if check fault for projection, try only for B here
 
     # only if check fault for projection, try only for B here
     # create matrix from grid data, as well as empty array for results
@@ -503,12 +524,20 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
 
-    # loop through grid to refernce each point to closest point on reference plane by index
-    # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
-    for i in range(len(coords)):
-        ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
-        # get the cdistance to closest point and save it
-        perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+    if domain.fault == True:
+        for i in range(len(coords)):
+            if fault_check[i] == 2:
+                ref[i] = cdist(coords[i].reshape(1, 3), aux_vert2).argmin()
+            else:
+                ref[i] = cdist(coords[i].reshape(1, 3), aux_vert1).argmin()
+            perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+    else:
+        # loop through grid to refernce each point to closest point on reference plane by index
+        # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
+        for i in range(len(coords)):
+            ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
+            # get the cdistance to closest point and save it
+            perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
 
     # reshape perp to make values either negative or positive (depending on scalar field value)
     # there has to be an easier way to do it with the a mask
@@ -546,7 +575,7 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain):
 def distances_grid(ref, perp, dist_clean):
 
     # manual
-    an_factor = 5
+    an_factor = 2
 
     dist_matrix = np.zeros([len(ref), len(ref)])
     ref = ref.astype(int)
@@ -647,7 +676,7 @@ def create_kriged_field(domain, variogram_model, distance_type='euclidian',
 
 def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
                         moving_neighbourhood='all', kriging_type='OK', n_closest_points=20,
-                        sgs_grid=None, shuffled_grid=None):
+                        sgs_grid=None, shuffled_grid=None, sgs_fault_block=None):
     '''
     Method to create a kriged field over the defined grid of the gempy solution depending on the defined
     input data (conditioning).
@@ -683,7 +712,7 @@ def create_gaussian_field(domain, variogram_model, distance_type='euclidian',
         dist_all_to_all = cdist(sgs_locations, sgs_locations)
     elif distance_type == 'deformed':
         # calculate distances between all input data points anf grid points
-        dist_all_to_all = def_dist(domain, sgs_locations, sgs_gradients)
+        dist_all_to_all = def_dist(domain, sgs_locations, sgs_gradients, sgs_fault_block)
 
     # set counter og active data (start=input data, grwoing by 1 newly calcualted point each run)
     active_data = len(sgs_prop_updating)
