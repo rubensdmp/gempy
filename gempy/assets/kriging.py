@@ -58,7 +58,7 @@ class domain(object):
 
         if self.fault == True:
             #self.faultmodel = faultmodel
-            self.offset = 20
+            self.offset = 0
             self.fz_ext = [1950, 2050]
 
     def set_domain(self, domain):
@@ -246,7 +246,7 @@ class field_solution(object):
         self.field_type = field_type
         self.grid_distances = grid_distances
 
-    def plot_distances(self, geo_data, direction='y', cell_number=0, contour=False, cmap='hot',
+    def plot_distances(self, geo_data, direction='y', cell_number=0, point=100, contour=False, cmap='plasma_r',
                        alpha=0, legend=False, interpolation='nearest'):
 
         #fig = plt.figure(figsize=(16,10))
@@ -254,7 +254,7 @@ class field_solution(object):
         #a = ax.scatter(self.results_df['X'], self.results_df['Y'], self.results_df['Z'], c=self.grid_distances[:,100], cmap='Reds')
 
         a = np.full_like(self.domain.mask, np.nan, dtype=np.double)
-        a[np.where(self.domain.mask == True)] = self.grid_distances[:,100]
+        a[np.where(self.domain.mask == True)] = self.grid_distances[:,point]
 
         # create plot object
         p = visualization_2d.PlotSolution(geo_data)
@@ -264,20 +264,20 @@ class field_solution(object):
         cmap = cm.get_cmap(cmap)
         cmap.set_bad(color='w', alpha=alpha)
 
-        plot.plot_section(geo_data, direction=direction, cell_number=cell_number)
+        plot.plot_section(geo_data, direction=direction, cell_number=cell_number, show_data=True)
         if contour == True:
             im = plt.contourf(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
                               origin='lower', levels=45,
                               extent=extent_val, interpolation=interpolation)
             if legend:
                 ax = plt.gca()
-                helpers.add_colorbar(axes=ax, label='prop', cs=im)
+                helpers.add_colorbar(axes=ax, label='dist', cs=im)
         else:
             im = plt.imshow(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
                             origin='lower',
                             extent=extent_val, interpolation=interpolation)
             if legend:
-                helpers.add_colorbar(im, label='property value', location='right')
+                helpers.add_colorbar(im, label='dist', location='right')
 
 
     def plot_results(self, geo_data, prop='val', direction='y', result='interpolation', cell_number=0, contour=False,
@@ -441,22 +441,22 @@ def ordinary_kriging(a, b, prop, var_mod):
 def def_dist(domain, coords, gradients, fault_block):
 
     # 1: Calculate reference plane within domain between top and bottom border (based on scalar field value)
-    med_ver, med_sim, grad_plane, aux_vert1, aux_vert2 = create_central_plane(domain)
+    med_ver, med_sim, grad_plane = create_central_plane(domain)
 
     # plot plane
-    fig = plt.figure(figsize=(16,10))
-    ax = fig.add_subplot(1, 1, 1, projection='3d')
-    a = ax.plot_trisurf(med_ver[:,0], med_ver[:,1], med_ver[:,2], triangles=med_sim)
+    #fig = plt.figure(figsize=(16,10))
+    #ax = fig.add_subplot(1, 1, 1, projection='3d')
+    #a = ax.plot_trisurf(med_ver[:,0], med_ver[:,1], med_ver[:,2], triangles=med_sim)
 
     # 2: Projection of each point in domain on reference plane (by closest point) and save reference point
     #    Definition of perpendicular distance portion either by method A or method B
-    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, gradients, domain, aux_vert1, aux_vert2, fault_block)
+    ref, perp = projection_of_each_point(med_ver, grad_plane, coords, gradients, domain, fault_block)
 
     # 3: Calculate all distances between vertices on reference plane by heat method
     dist_clean = proj_surface_dist_each_to_each(med_ver, med_sim)
 
     # 4: Combine results to final distance matrix, applying anisotropy factor if desired
-    dist_matrix = distances_grid(ref, perp, dist_clean)
+    dist_matrix = distances_grid(ref, perp, dist_clean, domain, fault_block)
 
     return dist_matrix
 
@@ -477,20 +477,11 @@ def create_central_plane(domain):
                  (domain.sol.grid.regular_grid.extent[3] / domain.sol.grid.regular_grid.resolution[1]),
                  (domain.sol.grid.regular_grid.extent[5] / domain.sol.grid.regular_grid.resolution[2])))
 
-    if domain.fault == True:
-        # for checking fault block when projecting
-        test2 = np.where((domain.fz_ext[1] < vertices[:, 0]), vertices[:, 0], 1000000)
-        test1 = np.where((vertices[:, 0] < domain.fz_ext[0]), vertices[:, 0], 1000000)
-        test2 = test2.reshape(vertices[:, 1:].shape[0], 1)
-        test1 = test1.reshape(vertices[:, 1:].shape[0], 1)
-        aux_vert2 = np.hstack((test2, vertices[:, 1:]))
-        aux_vert1 = np.hstack((test1, vertices[:, 1:]))
-    else:
-        aux_vert1 = 0
-        aux_vert2 = 0
+    #fig = plt.figure()
+    #ax = fig.add_subplot(111, projection='3d')
+    #ax.scatter(vertices3[:, 0], vertices3[:, 1], vertices3[:, 2])
 
-
-    return vertices, simplices, grad, aux_vert1, aux_vert2
+    return vertices, simplices, grad
 
 def proj_surface_dist_each_to_each(med_ver, med_sim):
     # precomputing
@@ -508,7 +499,7 @@ def proj_surface_dist_each_to_each(med_ver, med_sim):
 
     return dist_clean
 
-def projection_of_each_point(ver, plane_grad, coords, gradients, domain, aux_vert1, aux_vert2, fault_check):
+def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_check):
 
     # TODO: Only works properly with absolute distance, does not work via gradient
     ref = np.zeros(len(coords))
@@ -524,20 +515,23 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, aux_ver
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
 
+    '''
     if domain.fault == True:
         for i in range(len(coords)):
             if fault_check[i] == 2:
                 ref[i] = cdist(coords[i].reshape(1, 3), aux_vert2).argmin()
+                perp[i] = cdist(coords[i].reshape(1, 3), aux_vert2).min()
             else:
                 ref[i] = cdist(coords[i].reshape(1, 3), aux_vert1).argmin()
-            perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+                perp[i] = cdist(coords[i].reshape(1, 3), aux_vert1).min()
+            # get normed distance from gradient distance
+                #perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
     else:
-        # loop through grid to refernce each point to closest point on reference plane by index
-        # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
-        for i in range(len(coords)):
-            ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
-            # get the cdistance to closest point and save it
-            perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+    '''
+    for i in range(len(coords)):
+        ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
+        # get the cdistance to closest point and save it
+        perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
 
     # reshape perp to make values either negative or positive (depending on scalar field value)
     # there has to be an easier way to do it with the a mask
@@ -572,10 +566,13 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, aux_ver
 
     return ref, perp
 
-def distances_grid(ref, perp, dist_clean):
+def distances_grid(ref, perp, dist_clean, domain, fault_check):
+
+    # quick dirty fix for fault offset
+    #dist_clean[2300:][2300:] = dist_clean[2300:][2300:]-200
 
     # manual
-    an_factor = 2
+    an_factor = 5
 
     dist_matrix = np.zeros([len(ref), len(ref)])
     ref = ref.astype(int)
