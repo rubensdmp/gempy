@@ -264,11 +264,14 @@ class field_solution(object):
         cmap = cm.get_cmap(cmap)
         cmap.set_bad(color='w', alpha=alpha)
 
-        plot.plot_section(geo_data, direction=direction, cell_number=cell_number, show_data=True)
+        plot.plot_section(geo_data, direction=direction, cell_number=cell_number, show_data=False, show_legend=False)
         if contour == True:
             im = plt.contourf(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, cmap=cmap,
-                              origin='lower', levels=45,
+                              origin='lower', levels=25,
                               extent=extent_val, interpolation=interpolation)
+            im2 = plt.contour(a.reshape(self.domain.sol.grid.regular_grid.resolution)[_a, _b, _c].T, colors='k',
+                             origin='lower', levels=25,
+                             extent=extent_val, interpolation=interpolation, linewidths=1)
             if legend:
                 ax = plt.gca()
                 helpers.add_colorbar(axes=ax, label='dist', cs=im)
@@ -477,9 +480,10 @@ def create_central_plane(domain):
                  (domain.sol.grid.regular_grid.extent[3] / domain.sol.grid.regular_grid.resolution[1]),
                  (domain.sol.grid.regular_grid.extent[5] / domain.sol.grid.regular_grid.resolution[2])))
 
+
     #fig = plt.figure()
     #ax = fig.add_subplot(111, projection='3d')
-    #ax.scatter(vertices3[:, 0], vertices3[:, 1], vertices3[:, 2])
+    #ax.scatter(vertices[425:, 0], vertices[425:, 1], vertices[425:, 2])
 
     return vertices, simplices, grad
 
@@ -511,7 +515,7 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_c
     # create matrix from grid data, as well as empty array for results
     # grad_check = self.grid_dataframe.as_matrix(('scalar',))[:,0] # old version
     # new version, seems to be equivalent
-    gradients = gradients >= plane_grad
+    gradients_arr = gradients <= plane_grad
     ref = np.zeros(len(coords))
     perp = np.zeros(len(coords))
 
@@ -525,19 +529,25 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_c
                 ref[i] = cdist(coords[i].reshape(1, 3), aux_vert1).argmin()
                 perp[i] = cdist(coords[i].reshape(1, 3), aux_vert1).min()
             # get normed distance from gradient distance
-                #perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
+            # perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
     else:
     '''
+
+
     for i in range(len(coords)):
         ref[i] = cdist(coords[i].reshape(1, 3), ver).argmin()
         # get the cdistance to closest point and save it
         perp[i] = cdist(coords[i].reshape(1, 3), ver).min()
 
+    #print(np.max(perp))
+    #print(np.min(perp))
+
     # reshape perp to make values either negative or positive (depending on scalar field value)
     # there has to be an easier way to do it with the a mask
     for i in range(len(perp)):
-        if gradients[i] == True:
+        if gradients_arr[i] == True:
             perp[i] = perp[i] * (-1)
+
 
     # TODO. This is a problem
     '''
@@ -546,9 +556,12 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_c
     perp = np.zeros(len(coords))
 
     # factor calculation for gradient distance to distance with average thickness
-    ave_thick = 200 # TODO: This sucks - need a better solution
+    ave_thick = 300 # TODO: This sucks - need a better solution
     grad_dist = domain.krig_scalmax + domain.krig_scalmin
     fact = ave_thick / grad_dist
+
+    print(np.max(gradients))
+    print(np.min(gradients))
 
     # loop through grid to refernce each point to closest point on reference plane by index
     # if fault true, use vertices that exclude fault plane, else all vertices on reference plane
@@ -557,10 +570,13 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_c
         # get normed distance from gradient distance
         perp[i] = (gradients[i] - plane_grad) * fact
 
+    print(np.max(perp))
+    print(np.min(perp))
+
     # reshape perp to make values either negative or positive (depending on scalar field value)
     # there has to be an easier way to do it with the a mask
     for i in range(len(perp)):
-        if gradients[i] == True:
+        if gradients_arr[i] == True:
             perp[i] = perp[i] * (-1)
     '''
 
@@ -569,10 +585,13 @@ def projection_of_each_point(ver, plane_grad, coords, gradients, domain, fault_c
 def distances_grid(ref, perp, dist_clean, domain, fault_check):
 
     # quick dirty fix for fault offset
-    #dist_clean[2300:][2300:] = dist_clean[2300:][2300:]-200
+    #dist_clean[430:,430:] = dist_clean[430,430:]-50
+
+    print(dist_clean.shape)
+    print(dist_clean.min())
 
     # manual
-    an_factor = 5
+    an_factor = 1
 
     dist_matrix = np.zeros([len(ref), len(ref)])
     ref = ref.astype(int)
