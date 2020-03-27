@@ -3,6 +3,7 @@ from matplotlib.cm import ScalarMappable as SM
 from gempy.plot.visualization_2d import PlotData2D
 import numpy as np
 import os
+import gempy as gp
 
 
 def export_geomap2geotiff(path, geo_model, geo_map=None, geotiff_filepath=None):
@@ -133,3 +134,44 @@ def export_moose_input(geo_model, path=None):
     f.close()
     
     print("Successfully exported geological model as moose input to "+path)
+
+
+def export_surfaces_to_obj(geo_model, path):
+    """Export model surfaces as obj-files that can be imported into Blender.
+
+    Args:
+        path: Filepath to which the obj-files of the surfaces are to be exported. Should end with "/".
+        geo_model: Solution of the computed geomodel.
+
+    Returns:
+        One obj-file for each surface in the model.
+    """
+    filepath_export = path
+    surface_names = geo_model.surfaces.df['surface']
+    surface_colors = geo_model.surfaces.colors.colordict
+
+    vertices_all_surfaces =  gp.get_surfaces(geo_model.solutions)[0]
+    simplices_all_surfaces =  gp.get_surfaces(geo_model.solutions)[1]
+
+    for i in np.arange(len(vertices_all_surfaces)):
+        with open(filepath_export+"surface_{}.obj".format(surface_names[i]), 'w') as ofile:
+            # color
+            # saved as first entry in obj-file
+            # is not automatically set when imported
+            color = surface_colors[surface_names[i]]
+            line = 'color {}'.format(color) + '\n'
+            ofile.write(line)
+
+            for v in vertices_all_surfaces[i]:
+                line = "v" + " {:.5}".format(v[0]) + " {:.5}".format(v[1]) + " {:.5} ".format(v[2]) + "\n"
+                line = line.format()
+                ofile.write(line)
+
+            for s in simplices_all_surfaces[i]:
+                line = "{0} {1} "
+                # obj vertex indices for faces start at 1 not 0
+                indices = [str(i + 1) for i in s[:]]
+                line = line.format("f", ' '.join(indices) + "\n")
+                ofile.write(line)
+
+
