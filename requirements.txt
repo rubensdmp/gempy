@@ -2,7 +2,7 @@ pandas<=1.0.5
 Theano>=1.0.4 # In windows use conda! This will install all the required compilers
 matplotlib
 numpy
-pytest
+pytest  # dev req only?
 seaborn>=0.9
 networkx
 scikit-image>=0.17

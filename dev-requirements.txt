@@ -1,4 +1,5 @@
 # This are additional libraries necessary to run sphinx and all the test
+pytest
 sphinx
 sphinx_gallery
 emg3d==0.11.0
