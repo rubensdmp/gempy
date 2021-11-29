@@ -1,0 +1,148 @@
+{
+    "fetchGzip": false,
+    "background": [
+        1.0,
+        1.0,
+        1.0
+    ],
+    "camera": {
+        "focalPoint": [
+            1000.0,
+            1000.0,
+            800.0
+        ],
+        "position": [
+            1208.9686679364531,
+            7145.653378206952,
+            2064.014706671558
+        ],
+        "viewUp": [
+            -0.2929283366537925,
+            -0.18305595686868847,
+            0.9384473913012554
+        ],
+        "clippingRange": [
+            3880.091820190709,
+            9311.10606389376
+        ]
+    },
+    "centerOfRotation": [
+        1000.0,
+        1000.0,
+        800.0
+    ],
+    "scene": [
+        {
+            "name": "data_0_0",
+            "type": "httpDataSetReader",
+            "httpDataSetReader": {
+                "url": "data_0_0"
+            },
+            "actor": {
+                "origin": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "scale": [
+                    1.0,
+                    1.0,
+                    1.0
+                ],
+                "position": [
+                    0.0,
+                    0.0,
+                    0.0
+                ]
+            },
+            "actorRotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ],
+            "mapper": {
+                "colorByArrayName": "",
+                "colorMode": 0,
+                "scalarMode": 5
+            },
+            "property": {
+                "representation": 2,
+                "edgeVisibility": 0,
+                "diffuseColor": [
+                    0.3215686274509804,
+                    0.4627450980392157,
+                    0.5098039215686274
+                ],
+                "pointSize": 5.0,
+                "opacity": 1.0
+            },
+            "lookupTable": {
+                "tableRange": [
+                    0.0,
+                    1.0
+                ],
+                "hueRange": [
+                    0.0,
+                    0.66667
+                ]
+            }
+        },
+        {
+            "name": "data_0_1",
+            "type": "httpDataSetReader",
+            "httpDataSetReader": {
+                "url": "data_0_1"
+            },
+            "actor": {
+                "origin": [
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                "scale": [
+                    1.0,
+                    1.0,
+                    1.0
+                ],
+                "position": [
+                    0.0,
+                    0.0,
+                    0.0
+                ]
+            },
+            "actorRotation": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+            ],
+            "mapper": {
+                "colorByArrayName": "",
+                "colorMode": 0,
+                "scalarMode": 5
+            },
+            "property": {
+                "representation": 2,
+                "edgeVisibility": 0,
+                "diffuseColor": [
+                    1.0,
+                    0.24705882352941178,
+                    0.12549019607843137
+                ],
+                "pointSize": 5.0,
+                "opacity": 1.0
+            },
+            "lookupTable": {
+                "tableRange": [
+                    0.0,
+                    1.0
+                ],
+                "hueRange": [
+                    0.0,
+                    0.66667
+                ]
+            }
+        }
+    ]
+}
