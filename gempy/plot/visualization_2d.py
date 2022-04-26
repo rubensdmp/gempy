@@ -414,8 +414,8 @@ class Plot2D:
                 cartesian_ori = np.dot(A_rotate, (orientations[['X', 'Y']] - shift).T).T
 
                 # Since we plot only the section we want the norm of those coordinates
-                points[['X']] = np.linalg.norm(cartesian_point, axis=1)
-                orientations[['X']] = np.linalg.norm(cartesian_ori, axis=1)
+                points['X'] = np.linalg.norm(cartesian_point, axis=1)
+                orientations['X'] = np.linalg.norm(cartesian_ori, axis=1)
                 x, y, Gx, Gy = 'X', 'Z', 'G_x', 'G_z'
 
         else:
@@ -455,8 +455,8 @@ class Plot2D:
         points_df = points[select_projected_p]
         points_df['colors'] = points_df['surface'].map(self._color_lot)
 
-        points_df.plot.scatter(x=x, y=y, ax=ax, c='colors', s=70,  zorder=102,
-                               edgecolors='white',
+        points_df.plot.scatter(x=x, y=y, ax=ax, c=points_df['surface'].map(self._color_lot),
+                               s=70,  zorder=102, edgecolors='white',
                                colorbar=False)
         # points_df.plot.scatter(x=x, y=y, ax=ax, c='white', s=80,  zorder=101,
         #                        colorbar=False)
